@@ -46,9 +46,10 @@ class UserConfig:
     def __init__(self):
         # OpenAI API related
         # [required]: OpenAI API key
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.openai_api_key = "ollama"
+        self.openai_api_base = "http://localhost:11434/v1"
         # [required]: Name of the OpenAI language model to be used
-        self.openai_model = "gpt-3.5-turbo-0613"
+        self.openai_model = "llama3.1"
         # self.openai_model="gpt-4-0613"
         # [optional]: Name of the organization under which the OpenAI API key is registered
         self.openai_organization = "Auromix"
@@ -74,7 +75,19 @@ class UserConfig:
         # [optional]: The prompt given to the AI, provided by the user
         self.user_prompt = ""
         # [optional]: The generated prompt by the administrator, used as a prefix for the AI's response
-        self.system_prompt = ""
+        self.system_prompt =(
+        "You are a robot controller AI for a turtlesim robot. "
+    "You must ONLY use the 'publish_cmd_vel' function to control the robot. "
+    "Never invent other function names. "
+    "Parameter mapping for movement commands: "
+    "move forward → linear_x=1.0, others=0. "
+    "move backward → linear_x=-1.0, others=0. "
+    "turn left → angular_z=1.0, others=0. "
+    "turn right → angular_z=-1.0, others=0. "
+    "stop → all parameters=0. "
+    "Always set robot_name='' and duration=2.0 unless specified. "
+    "Always call publish_cmd_vel with all required parameters: "
+    "robot_name, duration, linear_x, linear_y, linear_z, angular_x, angular_y, angular_z.")
         # TODO: System prompt only works for the first message,so it will be forgotten soon after the first message
         # modify the llm_model/chatgpt.py, add system_prompt to every prompt to solve this problem @Herman Ye
         # [optional]: The generated response provided by the AI

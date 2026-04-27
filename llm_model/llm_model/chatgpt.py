@@ -45,12 +45,15 @@ import json
 import os
 import time
 import openai
+import re
+import json
 from llm_config.user_config import UserConfig
 
 
 # Global Initialization
 config = UserConfig()
 openai.api_key = config.openai_api_key
+openai.api_base = config.openai_api_base
 # openai.organization = config.openai_organization
 
 
@@ -149,7 +152,7 @@ class ChatGPTNode(Node):
         # Creating message dictionary with given options
         message_element_object = {
             "role": role,
-            "content": content,
+            "content": content if content is not None else "null",
         }
         # Adding function call information if provided
         if name is not None:
@@ -195,7 +198,48 @@ class ChatGPTNode(Node):
         # Log
         self.get_logger().info(f"OpenAI response: {response}")
         return response
+    def extract_function_call_from_text(self, content: str):
+        if not isinstance(content, str):
+            return None
 
+        # 1단계: 백틱/마크다운 제거 후 텍스트 정리
+        text = re.sub(r'```[\w]*\n?', '', content)
+        text = text.strip().strip('`').strip()
+
+        # 2단계: "함수명(인자)" 패턴 탐색
+        match = re.search(r'(\w+)\(([^)]*)\)', text)
+        if not match:
+            return None
+
+        func_name = match.group(1)
+        func_args_str = match.group(2).strip()
+
+        # 3단계: 인자 파싱 시도
+        # 3-1순위: JSON 형태 {"key": value} 시도
+        try:
+            args_dict = json.loads(func_args_str)
+            return {"name": func_name, "arguments": json.dumps(args_dict)}
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # 3-2순위: keyword=value 형태 시도
+        args_dict = {}
+        for arg in func_args_str.split(','):
+            arg = arg.strip()
+            if '=' in arg:
+                k, v = arg.split('=', 1)
+                k = k.strip()
+                v = v.strip().strip("'\"")
+                try:
+                    args_dict[k] = float(v) if '.' in v else int(v)
+                except ValueError:
+                    args_dict[k] = v
+
+        if args_dict:
+            return {"name": func_name, "arguments": json.dumps(args_dict)}
+
+        # 3-3순위: 인자 없음
+        return {"name": func_name, "arguments": "{}"}
     def get_response_information(self, chatgpt_response):
         """
         Returns the response information from the chatgpt response.
@@ -207,17 +251,20 @@ class ChatGPTNode(Node):
         content = message.get("content")
         function_call = message.get("function_call", None)
 
-        # Initializing function flag, 0: no function call, 1: function call
-        function_flag = 0
+        if function_call is None:
+            content = message.get("content", "")
+            function_call = self.extract_function_call_from_text(content)
 
+        # Initializing function flag, 0: no function call, 1: function call
         # If the content is not None, then the response is text
         # If the content is None, then the response is function call
-        if content is not None:
+        if function_call is not None:
+            function_flag = 1
+            content = None  # function call이면 content 비움
+            self.get_logger().info("OpenAI response type: FUNCTION CALL")
+        else:
             function_flag = 0
             self.get_logger().info("OpenAI response type: TEXT")
-        else:
-            function_flag = 1
-            self.get_logger().info("OpenAI response type: FUNCTION CALL")
         # Log
         self.get_logger().info(
             f"Get message from OpenAI: {message}, type: {type(message)}"

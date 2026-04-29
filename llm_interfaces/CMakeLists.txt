@@ -18,6 +18,8 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ChatGPT.msg"
+  "msg/GraspCommand.msg"
+  "msg/GraspFeedback.msg"
   "srv/ChatGPT.srv"
  )
 

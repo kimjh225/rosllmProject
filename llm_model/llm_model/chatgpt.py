@@ -48,6 +48,7 @@ import openai
 import re
 import json
 from llm_config.user_config import UserConfig
+from .role_action_validator import RoleActionValidator
 
 
 # Global Initialization
@@ -121,6 +122,9 @@ class ChatGPTNode(Node):
 
         # Function name
         self.function_name = "null"
+
+        # Role/action validator (LLM output gate before ROS path)
+        self.role_action_validator = RoleActionValidator(max_retries=config.validator_max_retries)
         # Initialization ready
         self.publish_string("llm_model_processing", self.initialization_publisher)
 
@@ -174,27 +178,30 @@ class ChatGPTNode(Node):
         # Returning updated chat history
         return config.chat_history
 
-    def generate_chatgpt_response(self, messages_input):
+    def generate_chatgpt_response(self, messages_input, use_functions=True):
         """
         Generates a chatgpt response based on the input messages provided.
         All parameters can be found in the llm_config/user_config.py file.
         """
         # Log
         self.get_logger().info(f"Sending messages to OpenAI: {messages_input}")
-        response = openai.ChatCompletion.create(
-            model=config.openai_model,
-            messages=messages_input,
-            functions=config.robot_functions_list,
-            function_call="auto",
-            # temperature=config.openai_temperature,
-            # top_p=config.openai_top_p,
-            # n=config.openai_n,
-            # stream=config.openai_stream,
-            # stop=config.openai_stop,
-            # max_tokens=config.openai_max_tokens,
-            # presence_penalty=config.openai_presence_penalty,
-            # frequency_penalty=config.openai_frequency_penalty,
-        )
+        request_kwargs = {
+            "model": config.openai_model,
+            "messages": messages_input,
+            # "temperature": config.openai_temperature,
+            # "top_p": config.openai_top_p,
+            # "n": config.openai_n,
+            # "stream": config.openai_stream,
+            # "stop": config.openai_stop,
+            # "max_tokens": config.openai_max_tokens,
+            # "presence_penalty": config.openai_presence_penalty,
+            # "frequency_penalty": config.openai_frequency_penalty,
+        }
+        if use_functions:
+            request_kwargs["functions"] = config.robot_functions_list
+            request_kwargs["function_call"] = "auto"
+
+        response = openai.ChatCompletion.create(**request_kwargs)
         # Log
         self.get_logger().info(f"OpenAI response: {response}")
         return response
@@ -277,6 +284,18 @@ class ChatGPTNode(Node):
         )
 
         return message, content, function_call, function_flag
+
+    def call_llm_for_validator(self, retry_messages):
+        """
+        Re-call LLM for validator correction loop using isolated messages.
+        This path intentionally excludes function-calling tools.
+        """
+        messages_input = [{"role": "system", "content": config.system_prompt}] + retry_messages
+        retry_response = self.generate_chatgpt_response(messages_input, use_functions=False)
+        retry_message = retry_response["choices"][0]["message"]
+        retry_content = retry_message.get("content", "")
+        self.get_logger().info(f"Validator retry content: {retry_content}")
+        return retry_content
 
     def write_chat_history_to_json(self):
         """
@@ -362,6 +381,23 @@ class ChatGPTNode(Node):
         message, text, function_call, function_flag = self.get_response_information(
             chatgpt_response
         )
+
+        # Validate text command path before ROS 전달
+        if function_flag == 0:
+            is_valid, validated_command, _ = self.role_action_validator.validate_with_retry(
+                user_prompt=user_prompt,
+                initial_content=text,
+                response_fn=self.call_llm_for_validator,
+                logger_fn=self.get_logger().info,
+            )
+            if is_valid:
+                text = json.dumps(validated_command)
+            else:
+                text = (
+                    "Validation failed after retries. "
+                    "Please provide command as JSON with role/action/parameters."
+                )
+
         # Append response to chat history
         self.add_message_to_history(
             role="assistant", content=text, function_call=function_call

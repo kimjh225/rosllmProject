@@ -76,18 +76,12 @@ class UserConfig:
         self.user_prompt = ""
         # [optional]: The generated prompt by the administrator, used as a prefix for the AI's response
         self.system_prompt =(
-        "You are a robot controller AI for a turtlesim robot. "
-    "You must ONLY use the 'publish_cmd_vel' function to control the robot. "
-    "Never invent other function names. "
-    "Parameter mapping for movement commands: "
-    "move forward → linear_x=1.0, others=0. "
-    "move backward → linear_x=-1.0, others=0. "
-    "turn left → angular_z=1.0, others=0. "
-    "turn right → angular_z=-1.0, others=0. "
-    "stop → all parameters=0. "
-    "Always set robot_name='' and duration=2.0 unless specified. "
-    "Always call publish_cmd_vel with all required parameters: "
-    "robot_name, duration, linear_x, linear_y, linear_z, angular_x, angular_y, angular_z.")
+            "You are a robot-arm controller AI. "
+            "Always return exactly one JSON object and no extra text. "
+            'Schema: {"role":"MANIPULATION","action":"grasp","parameters":{"force":float,"object_type":string,"is_fragile":bool}}. '
+            "Use role=MANIPULATION and action=grasp only. "
+            "All three parameters are mandatory."
+        )
         # TODO: System prompt only works for the first message,so it will be forgotten soon after the first message
         # modify the llm_model/chatgpt.py, add system_prompt to every prompt to solve this problem @Herman Ye
         # [optional]: The generated response provided by the AI
@@ -101,6 +95,8 @@ class UserConfig:
         # self.chat_history_path = os.path.dirname(os.path.abspath(__file__))
         # [optional]: The limit of the chat history length
         self.chat_history_max_length = 4000
+        # Validator related
+        self.validator_max_retries = 3
         # self.chat_history_max_length=16000
 
         # Robot behavior related

@@ -37,6 +37,7 @@ from llm_interfaces.srv import ChatGPT
 from llm_interfaces.msg import GraspCommand, GraspFeedback
 from std_msgs.msg import Float64MultiArray, MultiArrayDimension, MultiArrayLayout
 from std_srvs.srv import Empty
+from basic_capstone.msg import GraspCommand
 
 # LLM related
 import json
@@ -66,6 +67,11 @@ class ArmRobot(Node):
         self.function_call_server = self.create_service(
             ChatGPT, "/ChatGPT_function_call_service", self.function_call_callback
         )
+        # Publisher for grasp_command
+        self.grasp_publisher = self.create_publisher(
+            GraspCommand, "/grasp_command", 10
+        )
+
         # Node initialization log
         self.get_logger().info("ArmRobot node has been initialized")
 
@@ -146,6 +152,15 @@ class ArmRobot(Node):
         os.system(command)
         self.get_logger().info(f"Published target message successfully: {pose}")
         return pose_str
+
+    def publish_grasp_command(self, **kwargs):
+        msg = GraspCommand()
+        msg.force = float(kwargs.get("force", 1.0))
+        msg.object_type = str(kwargs.get("object_type", "unknown"))
+        msg.is_fragile = bool(kwargs.get("is_fragile", False))
+        self.grasp_publisher.publish(msg)
+        self.get_logger().info(f"GraspCommand published: {msg.object_type}, force: {msg.force}")
+        return f"grasp command sent: {msg.object_type}"
 
 
 

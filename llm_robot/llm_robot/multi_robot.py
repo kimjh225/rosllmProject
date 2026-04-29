@@ -179,15 +179,9 @@ class MultiRobot(Node):
 
 
 def main():
-    rclpy.init()
-    multi_robot = MultiRobot()
-    try:
-        rclpy.spin(multi_robot)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        multi_robot.destroy_node()
-        rclpy.shutdown()
+    raise RuntimeError(
+        "multi_robot is excluded in arm-only mode. Use 'ros2 run llm_robot arm_robot' instead."
+    )
 
 
 if __name__ == "__main__":

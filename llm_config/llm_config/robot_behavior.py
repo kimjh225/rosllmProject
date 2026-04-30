@@ -163,55 +163,30 @@ robot_functions_list_1 = [
     },
 ]
 
-robot_functions_list_multi_robot = [
+robot_functions_list_grasp = [
     {
-        "name": "publish_cmd_vel",
-        "description": "Publish cmd_vel message to control the movement and rotation of turtlesim. This function is only compatible with turtlesim and not for robotic arm.",
+        "name": "grasp",
+        "description": "Execute a grasp command for arm manipulation.",
         "parameters": {
             "type": "object",
             "properties": {
-                "robot_name": {
+                "force": {
+                    "type": "number",
+                    "description": "Target grasp force.",
+                },
+                "object_type": {
                     "type": "string",
-                    "description": "Name of the robot instance that should be controlled. Valid robot names are 'turtle1','turtle2','minipupper', when no specific robot name is specified, robot_name=''",
+                    "description": "Target object type for grasping.",
                 },
-                "duration": {
-                    "type": "number",
-                    "description": "Duration of time (in seconds) for which the movement should be performed.",
-                },
-                "linear_x": {
-                    "type": "number",
-                    "description": "Linear velocity along the x-axis for the robot.",
-                },
-                "linear_y": {
-                    "type": "number",
-                    "description": "Linear velocity along the y-axis for the robot.",
-                },
-                "linear_z": {
-                    "type": "number",
-                    "description": "Linear velocity along the z-axis for the robot.",
-                },
-                "angular_x": {
-                    "type": "number",
-                    "description": "Angular velocity around the x-axis for the robot.",
-                },
-                "angular_y": {
-                    "type": "number",
-                    "description": "Angular velocity around the y-axis for the robot.",
-                },
-                "angular_z": {
-                    "type": "number",
-                    "description": "Angular velocity around the z-axis for the robot.",
+                "is_fragile": {
+                    "type": "boolean",
+                    "description": "Whether the target object is fragile.",
                 },
             },
             "required": [
-                "robot_name",
-                "duration",
-                "linear_x",
-                "linear_y",
-                "linear_z",
-                "angular_x",
-                "angular_y",
-                "angular_z",
+                "force",
+                "object_type",
+                "is_fragile",
             ],
         },
     },
@@ -225,7 +200,7 @@ class RobotBehavior:
     """
 
     def __init__(self):
-        self.robot_functions_list = robot_functions_list_multi_robot
+        self.robot_functions_list = robot_functions_list_grasp
 
 
 if __name__ == "__main__":

@@ -115,10 +115,9 @@ class TurtleRobot(Node):
 
 
 def main():
-    rclpy.init()
-    turtle_robot = TurtleRobot()
-    rclpy.spin(turtle_robot)
-    rclpy.shutdown()
+    raise RuntimeError(
+        "turtle_robot is disabled in arm-only mode. Use 'ros2 run llm_robot arm_robot' instead."
+    )
 
 
 if __name__ == "__main__":

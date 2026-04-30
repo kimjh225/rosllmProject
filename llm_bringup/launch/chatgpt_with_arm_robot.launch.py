@@ -28,8 +28,6 @@
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
 from launch.actions import IncludeLaunchDescription
 from launch.substitutions import PathJoinSubstitution
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -55,6 +53,8 @@ def generate_launch_description():
                 executable="chatgpt",
                 name="chatgpt",
                 output="screen",
+                # chatgpt includes validator path and forwards validated grasp
+                # commands into /ChatGPT_function_call_service.
             ),
             Node(
                 package="llm_output",

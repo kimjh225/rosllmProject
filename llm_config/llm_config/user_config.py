@@ -94,7 +94,7 @@ class UserConfig:
         self.chat_history_path = os.path.expanduser("~")
         # self.chat_history_path = os.path.dirname(os.path.abspath(__file__))
         # [optional]: The limit of the chat history length
-        self.chat_history_max_length = 4000
+        self.chat_history_max_length = 30
         # Validator related
         self.validator_max_retries = 3
         # self.chat_history_max_length=16000

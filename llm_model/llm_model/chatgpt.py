@@ -44,18 +44,16 @@ from std_msgs.msg import String
 import json
 import os
 import time
-import openai
 import re
-import json
+from openai import OpenAI
 from llm_config.user_config import UserConfig
 from .role_action_validator import RoleActionValidator
+from basic_capstone.msg import GraspFeedback
 
 
 # Global Initialization
 config = UserConfig()
-openai.api_key = config.openai_api_key
-openai.api_base = config.openai_api_base
-# openai.organization = config.openai_organization
+openai_client = OpenAI(api_key=config.openai_api_key, base_url=config.openai_api_base)
 
 
 class ChatGPTNode(Node):
@@ -85,6 +83,10 @@ class ChatGPTNode(Node):
         # LLM feedback for user publisher
         self.llm_feedback_publisher = self.create_publisher(
             String, "/llm_feedback_to_user", 0
+        )
+        # Grasp feedback subscriber (from state_feedback_node or Unity)
+        self.grasp_feedback_subscriber = self.create_subscription(
+            GraspFeedback, "/grasp_feedback", self.grasp_feedback_callback, 10
         )
         # ChatGPT function call client
         # When function call is detected
@@ -201,7 +203,7 @@ class ChatGPTNode(Node):
             request_kwargs["functions"] = config.robot_functions_list
             request_kwargs["function_call"] = "auto"
 
-        response = openai.ChatCompletion.create(**request_kwargs)
+        response = openai_client.chat.completions.create(**request_kwargs)
         # Log
         self.get_logger().info(f"OpenAI response: {response}")
         return response
@@ -254,12 +256,14 @@ class ChatGPTNode(Node):
         function_flag = 0: no function call, 1: function call
         """
         # Getting response information
-        message = chatgpt_response["choices"][0]["message"]
-        content = message.get("content")
-        function_call = message.get("function_call", None)
+        message = chatgpt_response.choices[0].message
+        content = message.content
+        raw_fc = message.function_call
+        function_call = (
+            {"name": raw_fc.name, "arguments": raw_fc.arguments} if raw_fc is not None else None
+        )
 
         if function_call is None:
-            content = message.get("content", "")
             function_call = self.extract_function_call_from_text(content)
 
         # Initializing function flag, 0: no function call, 1: function call
@@ -292,8 +296,7 @@ class ChatGPTNode(Node):
         """
         messages_input = [{"role": "system", "content": config.system_prompt}] + retry_messages
         retry_response = self.generate_chatgpt_response(messages_input, use_functions=False)
-        retry_message = retry_response["choices"][0]["message"]
-        retry_content = retry_message.get("content", "")
+        retry_content = retry_response.choices[0].message.content or ""
         self.get_logger().info(f"Validator retry content: {retry_content}")
         return retry_content
 
@@ -345,34 +348,46 @@ class ChatGPTNode(Node):
         parameters = validated_command.get("parameters", {})
         return {"name": "grasp", "arguments": json.dumps(parameters)}
 
+    def grasp_feedback_callback(self, msg):
+        """
+        Receive /grasp_feedback from state_feedback_node or Unity.
+        Add result to chat_history and generate LLM follow-up response.
+        """
+        feedback_text = (
+            f"Grasp result: success={msg.success}, "
+            f"actual_force={msg.actual_force:.2f}, status={msg.status}"
+        )
+        self.get_logger().info(f"Grasp feedback received: {feedback_text}")
+        self.add_message_to_history(role="function", name="grasp", content=feedback_text)
+        self.write_chat_history_to_json()
+        feedback_messages = [
+            {"role": "system", "content": "You are a helpful robot assistant. Briefly summarize the grasp result in one sentence."},
+            {"role": "user", "content": feedback_text},
+        ]
+        follow_up = self.generate_chatgpt_response(feedback_messages, use_functions=False)
+        text = follow_up.choices[0].message.content or ""
+        self.add_message_to_history(role="assistant", content=text)
+        self.write_chat_history_to_json()
+        self.publish_string(text, self.llm_feedback_publisher)
+
     def function_call_response_callback(self, future):
         """
-        The function call response callback is called when the function call response is received.
-        the function_call_response_callback will call the gpt service again
-        to get the text response to user
+        Receive service acknowledgment from arx5_arm_robot.
+        Actual grasp result arrives asynchronously via /grasp_feedback topic.
         """
         try:
             response = future.result()
             self.get_logger().info(
-                f"Response from ChatGPT_function_call_service: {response}"
+                f"Response from ChatGPT_function_call_service: {response.response_text}"
             )
-
+            self.add_message_to_history(
+                role="function",
+                name=self.function_name,
+                content=response.response_text,
+            )
+            self.write_chat_history_to_json()
         except Exception as e:
             self.get_logger().info(f"ChatGPT function call service failed {e}")
-
-        response_text = "null"
-        self.add_message_to_history(
-            role="function",
-            name=self.function_name,
-            content=str(response_text),
-        )
-        # Generate chat completion
-        second_chatgpt_response = self.generate_chatgpt_response(config.chat_history)
-        # Get response information
-        message, text, function_call, function_flag = self.get_response_information(
-            second_chatgpt_response
-        )
-        self.publish_string(text, self.llm_feedback_publisher)
 
     def llm_callback(self, msg):
         """

@@ -34,14 +34,12 @@
 import rclpy
 from rclpy.node import Node
 from llm_interfaces.srv import ChatGPT
-from llm_interfaces.msg import GraspCommand, GraspFeedback
 from std_msgs.msg import Float64MultiArray, MultiArrayDimension, MultiArrayLayout
 from std_srvs.srv import Empty
 from basic_capstone.msg import GraspCommand
 
 # LLM related
 import json
-import os
 from llm_config.user_config import UserConfig
 
 # Global Initialization
@@ -56,18 +54,11 @@ class ArmRobot(Node):
         self.target_pose_publisher = self.create_publisher(
             Float64MultiArray, "/target_pose", 10
         )
-        self.grasp_feedback_publisher = self.create_publisher(
-            GraspFeedback, "/grasp_feedback", 10
-        )
-        self.grasp_command_subscriber = self.create_subscription(
-            GraspCommand, "/grasp_command", self.grasp_command_callback, 10
-        )
-
         # Server for function call
         self.function_call_server = self.create_service(
             ChatGPT, "/ChatGPT_function_call_service", self.function_call_callback
         )
-        # Publisher for grasp_command
+        # Publisher for grasp_command (→ state_feedback_node or Unity)
         self.grasp_publisher = self.create_publisher(
             GraspCommand, "/grasp_command", 10
         )
@@ -89,78 +80,39 @@ class ArmRobot(Node):
             response.response_text = str(function_execution_result)
         return response
 
-    def grasp_command_callback(self, msg):
-        feedback = self.execute_grasp_command(msg)
-        self.grasp_feedback_publisher.publish(feedback)
-
-    def execute_grasp_command(self, grasp_msg):
-        """
-        Execute a grasp command and return feedback.
-        """
-        feedback = GraspFeedback()
-        force = float(grasp_msg.force)
-        object_type = str(grasp_msg.object_type)
-        is_fragile = bool(grasp_msg.is_fragile)
-
-        if force <= 0.0:
-            feedback.success = False
-            feedback.actual_force = 0.0
-            feedback.status = "Invalid force: force must be > 0."
-            self.get_logger().info(feedback.status)
-            return feedback
-
-        recommended_force = min(force, 5.0 if is_fragile else 20.0)
-        feedback.success = True
-        feedback.actual_force = float(recommended_force)
-        feedback.status = (
-            f"Grasp executed: object_type={object_type}, "
-            f"is_fragile={is_fragile}, applied_force={recommended_force:.2f}"
-        )
-        self.get_logger().info(feedback.status)
-        return feedback
-
     def grasp(self, **kwargs):
         """
-        Convert validator-passed JSON arguments to GraspCommand and execute.
+        Publish GraspCommand to /grasp_command.
+        Feedback arrives asynchronously via /grasp_feedback (state_feedback_node or Unity).
         """
         grasp_command = GraspCommand()
         grasp_command.force = float(kwargs.get("force", 0.0))
         grasp_command.object_type = str(kwargs.get("object_type", "unknown"))
         grasp_command.is_fragile = bool(kwargs.get("is_fragile", False))
-
-        feedback = self.execute_grasp_command(grasp_command)
-        self.grasp_feedback_publisher.publish(feedback)
-        return feedback.status
+        self.grasp_publisher.publish(grasp_command)
+        self.get_logger().info(
+            f"GraspCommand published: object={grasp_command.object_type}, "
+            f"force={grasp_command.force}, is_fragile={grasp_command.is_fragile}"
+        )
+        return f"grasp command sent: object={grasp_command.object_type}, force={grasp_command.force}"
 
     def publish_target_pose(self, **kwargs):
         """
         Publishes target_pose message to control the movement of arx5_arm
         """
-
-        x_value = kwargs.get("x", 0.2)
-        y_value = kwargs.get("y", 0.2)
-        z_value = kwargs.get("z", 0.2)
-
-        roll_value = kwargs.get("roll", 0.2)
-        pitch_value = kwargs.get("pitch", 0.2)
-        yaw_value = kwargs.get("yaw", 0.2)
-
-        pose = [x_value, y_value, z_value, roll_value, pitch_value, yaw_value]
-        pose_str = ', '.join(map(str, pose))
-
-        command=f"ros2 topic pub /target_pose std_msgs/msg/Float64MultiArray '{{data: [{pose_str}]}}' -1"
-        os.system(command)
+        pose = [
+            kwargs.get("x", 0.2),
+            kwargs.get("y", 0.2),
+            kwargs.get("z", 0.2),
+            kwargs.get("roll", 0.2),
+            kwargs.get("pitch", 0.2),
+            kwargs.get("yaw", 0.2),
+        ]
+        msg = Float64MultiArray()
+        msg.data = [float(v) for v in pose]
+        self.target_pose_publisher.publish(msg)
         self.get_logger().info(f"Published target message successfully: {pose}")
-        return pose_str
-
-    def publish_grasp_command(self, **kwargs):
-        msg = GraspCommand()
-        msg.force = float(kwargs.get("force", 1.0))
-        msg.object_type = str(kwargs.get("object_type", "unknown"))
-        msg.is_fragile = bool(kwargs.get("is_fragile", False))
-        self.grasp_publisher.publish(msg)
-        self.get_logger().info(f"GraspCommand published: {msg.object_type}, force: {msg.force}")
-        return f"grasp command sent: {msg.object_type}"
+        return ', '.join(map(str, pose))
 
 
 

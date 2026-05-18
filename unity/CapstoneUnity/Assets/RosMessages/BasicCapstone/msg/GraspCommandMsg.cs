@@ -16,19 +16,25 @@ namespace RosMessageTypes.BasicCapstone
         public float force;
         public string object_type;
         public bool is_fragile;
+        public float move_speed;
+        public string motion_style;
 
         public GraspCommandMsg()
         {
             this.force = 0.0f;
             this.object_type = "";
             this.is_fragile = false;
+            this.move_speed = 0.0f;
+            this.motion_style = "";
         }
 
-        public GraspCommandMsg(float force, string object_type, bool is_fragile)
+        public GraspCommandMsg(float force, string object_type, bool is_fragile, float move_speed, string motion_style)
         {
             this.force = force;
             this.object_type = object_type;
             this.is_fragile = is_fragile;
+            this.move_speed = move_speed;
+            this.motion_style = motion_style;
         }
 
         public static GraspCommandMsg Deserialize(MessageDeserializer deserializer) => new GraspCommandMsg(deserializer);
@@ -38,6 +44,8 @@ namespace RosMessageTypes.BasicCapstone
             deserializer.Read(out this.force);
             deserializer.Read(out this.object_type);
             deserializer.Read(out this.is_fragile);
+            deserializer.Read(out this.move_speed);
+            deserializer.Read(out this.motion_style);
         }
 
         public override void SerializeTo(MessageSerializer serializer)
@@ -45,6 +53,8 @@ namespace RosMessageTypes.BasicCapstone
             serializer.Write(this.force);
             serializer.Write(this.object_type);
             serializer.Write(this.is_fragile);
+            serializer.Write(this.move_speed);
+            serializer.Write(this.motion_style);
         }
 
         public override string ToString()
@@ -52,7 +62,9 @@ namespace RosMessageTypes.BasicCapstone
             return "GraspCommandMsg: " +
             "\nforce: " + force.ToString() +
             "\nobject_type: " + object_type.ToString() +
-            "\nis_fragile: " + is_fragile.ToString();
+            "\nis_fragile: " + is_fragile.ToString() +
+            "\nmove_speed: " + move_speed.ToString() +
+            "\nmotion_style: " + motion_style.ToString();
         }
 
 #if UNITY_EDITOR

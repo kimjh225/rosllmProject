@@ -12,8 +12,8 @@ public class RobotArmController : MonoBehaviour
     public Transform endEffector;
 
     [Header("Target Objects")]
-    public GameObject targetObject;
-    public GameObject targetPlacement;
+    public GameObject targetObject;        // 잡을 물체: Target
+    public GameObject targetPlacement;     // 놓을 위치: TargetPlacement
 
     [Header("Gripper")]
     public Transform gripperLeft;
@@ -39,20 +39,7 @@ public class RobotArmController : MonoBehaviour
     public float[] placePose = new float[6];
 
     [Header("Move Settings")]
-    [Tooltip("기본 이동 시간입니다. 실제 이동 시간은 moveTime / move_speed 로 계산됩니다.")]
     public float moveTime = 2.0f;
-
-    [Tooltip("ROS 명령 속도 최솟값")]
-    public float minCommandSpeed = 0.3f;
-
-    [Tooltip("ROS 명령 속도 최댓값")]
-    public float maxCommandSpeed = 3.0f;
-
-    [Tooltip("조심스럽게 움직일 때 그리퍼 동작 시간 배율")]
-    public float gentleGripperMultiplier = 1.5f;
-
-    [Tooltip("빠르게 움직일 때 그리퍼 동작 시간 배율")]
-    public float fastGripperMultiplier = 0.7f;
 
     [Header("Joint Lock")]
     public bool lockJoints = true;
@@ -73,9 +60,6 @@ public class RobotArmController : MonoBehaviour
     private Vector3 initialTargetPosition;
     private Quaternion initialTargetRotation;
     private bool hasInitialTargetPose = false;
-
-    private float currentMoveSpeed = 1.0f;
-    private string currentMotionStyle = "normal";
 
     IEnumerator Start()
     {
@@ -237,14 +221,7 @@ public class RobotArmController : MonoBehaviour
             return;
         }
 
-        ApplyMotionCommand(msg);
-
-        Debug.Log(
-            $"✅ 명령 수신: object_type={msg.object_type}, " +
-            $"force={msg.force}, is_fragile={msg.is_fragile}, " +
-            $"move_speed={msg.move_speed}, motion_style={msg.motion_style}, " +
-            $"applied_speed={currentMoveSpeed}"
-        );
+        Debug.Log($"✅ 명령 수신: object_type={msg.object_type}, force={msg.force}, is_fragile={msg.is_fragile}");
 
         GameObject target = ResolveTargetObject(msg.object_type);
 
@@ -272,45 +249,6 @@ public class RobotArmController : MonoBehaviour
         }
 
         StartCoroutine(PickAndPlace(target, msg));
-    }
-
-    private void ApplyMotionCommand(GraspCommandMsg msg)
-    {
-        string style = string.IsNullOrEmpty(msg.motion_style)
-            ? "normal"
-            : msg.motion_style.ToLower().Trim();
-
-        float speed = msg.move_speed;
-
-        if (speed <= 0f)
-        {
-            speed = 1.0f;
-        }
-
-        if (style != "gentle" && style != "normal" && style != "fast")
-        {
-            style = "normal";
-        }
-
-        if (msg.is_fragile || style == "gentle")
-        {
-            style = "gentle";
-            speed = Mathf.Clamp(speed, minCommandSpeed, 0.7f);
-        }
-        else if (style == "fast")
-        {
-            speed = Mathf.Clamp(speed, 1.5f, maxCommandSpeed);
-        }
-        else
-        {
-            style = "normal";
-            speed = Mathf.Clamp(speed, 0.8f, 1.2f);
-        }
-
-        currentMotionStyle = style;
-        currentMoveSpeed = speed;
-
-        Debug.Log($"🎚️ Motion 설정 적용: style={currentMotionStyle}, speed={currentMoveSpeed}");
     }
 
     private GameObject ResolveTargetObject(string objectName)
@@ -350,7 +288,7 @@ public class RobotArmController : MonoBehaviour
         {
             Debug.Log("명령 시작 전 Target Reset...");
             ResetTargetToInitialPose();
-            yield return new WaitForSeconds(GetScaledWaitTime(0.2f));
+            yield return new WaitForSeconds(0.2f);
         }
 
         if (moveHomeBeforeCommand)
@@ -361,8 +299,6 @@ public class RobotArmController : MonoBehaviour
 
         Rigidbody rb = target.GetComponent<Rigidbody>();
         originalParent = target.transform.parent;
-
-        Debug.Log($"🚀 Pick & Place 시작: motion_style={currentMotionStyle}, move_speed={currentMoveSpeed}");
 
         // 1. Pick 방향으로 먼저 회전
         Debug.Log("Pick 방향으로 수평 이동...");
@@ -447,7 +383,7 @@ public class RobotArmController : MonoBehaviour
         Debug.Log("Home으로 복귀...");
         yield return StartCoroutine(MoveToPose(homePose));
 
-        PublishFeedback(true, msg.force, $"success:{currentMotionStyle}:{currentMoveSpeed}");
+        PublishFeedback(true, msg.force, "success");
 
         Debug.Log("✅ Pick & Place 완료");
         isBusy = false;
@@ -498,16 +434,13 @@ public class RobotArmController : MonoBehaviour
             startPose[i] = currentTargets[i];
         }
 
-        float appliedMoveTime = GetCurrentMoveTime();
         float elapsed = 0f;
 
-        Debug.Log($"⏱️ MoveToPose: baseTime={moveTime}, appliedTime={appliedMoveTime}, speed={currentMoveSpeed}, style={currentMotionStyle}");
-
-        while (elapsed < appliedMoveTime)
+        while (elapsed < moveTime)
         {
             elapsed += Time.deltaTime;
 
-            float t = Mathf.Clamp01(elapsed / appliedMoveTime);
+            float t = Mathf.Clamp01(elapsed / moveTime);
             t = Mathf.SmoothStep(0f, 1f, t);
 
             for (int i = 0; i < joints.Length && i < targetPose.Length; i++)
@@ -536,18 +469,6 @@ public class RobotArmController : MonoBehaviour
         }
     }
 
-    private float GetCurrentMoveTime()
-    {
-        float safeSpeed = Mathf.Clamp(currentMoveSpeed, minCommandSpeed, maxCommandSpeed);
-        return Mathf.Max(0.1f, moveTime / safeSpeed);
-    }
-
-    private float GetScaledWaitTime(float baseWait)
-    {
-        float safeSpeed = Mathf.Clamp(currentMoveSpeed, minCommandSpeed, maxCommandSpeed);
-        return Mathf.Max(0.05f, baseWait / safeSpeed);
-    }
-
     private IEnumerator AnimateGripper(float fromX, float toX)
     {
         if (gripperLeft == null || gripperRight == null)
@@ -557,18 +478,6 @@ public class RobotArmController : MonoBehaviour
         }
 
         float duration = 0.5f;
-
-        if (currentMotionStyle == "gentle")
-        {
-            duration *= gentleGripperMultiplier;
-        }
-        else if (currentMotionStyle == "fast")
-        {
-            duration *= fastGripperMultiplier;
-        }
-
-        duration = Mathf.Max(0.1f, duration);
-
         float elapsed = 0f;
 
         Vector3 leftStart = gripperLeft.localPosition;

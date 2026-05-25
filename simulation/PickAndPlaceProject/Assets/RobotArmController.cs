@@ -3,6 +3,13 @@ using Unity.Robotics.ROSTCPConnector;
 using RosMessageTypes.BasicCapstone;
 using System.Collections;
 
+public enum UnityTaskMode
+{
+    PickAndPlace,
+    PickAndCarryOnly,
+    PickMoveAndReturnObject
+}
+
 public class RobotArmController : MonoBehaviour
 {
     [Header("관절 순서: shoulder → arm → elbow → forearm → wrist → hand")]
@@ -15,22 +22,31 @@ public class RobotArmController : MonoBehaviour
     public GameObject targetObject;
     public GameObject targetPlacement;
 
+    [Header("Task Mode")]
+    public UnityTaskMode taskMode = UnityTaskMode.PickAndPlace;
+
+    [Header("Realistic Grasp Check")]
+    public bool requireGraspDistanceCheck = true;
+    public float graspAttachDistance = 0.13f;
+    public bool cleanupPreviousAttachmentOnNewCommand = true;
+
+    [Header("Release Behavior")]
+    public bool snapToTargetPlacementOnRelease = true;
+    public bool snapToOriginalPoseOnReturn = true;
+    public float placeHeightOffset = 0.03f;
+
+    [Header("Mode Wait")]
+    public float carryOnlyHoldSeconds = 1.0f;
+    public float returnModeWaitSeconds = 0.8f;
+
     [Header("Gripper")]
     public Transform gripperLeft;
     public Transform gripperRight;
-
-    [Tooltip("그리퍼가 열린 상태의 local X 거리")]
     public float gripOpenX = 0.03f;
-
-    [Tooltip("그리퍼가 닫힌 상태의 local X 거리")]
     public float gripCloseX = 0.003f;
 
     [Header("Object Attach Offset")]
-    [Tooltip("물체가 tool_link 기준으로 붙을 위치입니다. 물체가 떠 있거나 어긋나면 이 값을 조정하세요.")]
     public Vector3 attachLocalPosition = new Vector3(0f, 0f, 0.08f);
-
-    [Tooltip("물체를 놓을 때 TargetPlacement보다 얼마나 위에 둘지 정합니다.")]
-    public float placeHeightOffset = 0.03f;
 
     [Header("Pose 설정")]
     public float[] homePose = new float[6];
@@ -39,29 +55,17 @@ public class RobotArmController : MonoBehaviour
     public float[] placePose = new float[6];
 
     [Header("Move Settings")]
-    [Tooltip("기본 이동 시간입니다. 실제 이동 시간은 moveTime / move_speed 로 계산됩니다.")]
     public float moveTime = 2.0f;
-
-    [Tooltip("ROS 명령 속도 최솟값")]
     public float minCommandSpeed = 0.3f;
-
-    [Tooltip("ROS 명령 속도 최댓값")]
     public float maxCommandSpeed = 3.0f;
-
-    [Tooltip("조심스럽게 움직일 때 그리퍼 동작 시간 배율")]
     public float gentleGripperMultiplier = 1.5f;
-
-    [Tooltip("빠르게 움직일 때 그리퍼 동작 시간 배율")]
     public float fastGripperMultiplier = 0.7f;
 
     [Header("Joint Lock")]
     public bool lockJoints = true;
 
     [Header("Reset Settings")]
-    [Tooltip("명령을 받을 때마다 Target을 처음 위치로 되돌린 후 Pick & Place를 시작합니다.")]
     public bool resetTargetBeforeCommand = false;
-
-    [Tooltip("명령을 받을 때마다 로봇을 Home Pose로 먼저 보정한 뒤 시작합니다.")]
     public bool moveHomeBeforeCommand = false;
 
     private ROSConnection ros;
@@ -69,13 +73,15 @@ public class RobotArmController : MonoBehaviour
     private float[] currentTargets;
 
     private Transform originalParent;
-
     private Vector3 initialTargetPosition;
     private Quaternion initialTargetRotation;
     private bool hasInitialTargetPose = false;
 
     private float currentMoveSpeed = 1.0f;
     private string currentMotionStyle = "normal";
+
+    private GameObject currentAttachedObject;
+    private Transform currentAttachedOriginalParent;
 
     IEnumerator Start()
     {
@@ -98,6 +104,7 @@ public class RobotArmController : MonoBehaviour
         InitializeJointDrives();
 
         Debug.Log("✅ RobotArmController 준비 완료");
+        Debug.Log($"🧩 현재 Unity Task Mode: {taskMode}");
     }
 
     private bool ValidateRequiredReferences()
@@ -126,7 +133,6 @@ public class RobotArmController : MonoBehaviour
         if (targetObject == null)
         {
             GameObject foundTarget = GameObject.Find("Target");
-
             if (foundTarget != null)
             {
                 targetObject = foundTarget;
@@ -134,14 +140,13 @@ public class RobotArmController : MonoBehaviour
             }
             else
             {
-                Debug.LogWarning("Target Object가 비어 있습니다. 명령 수신 시 object_type 이름으로 다시 찾습니다.");
+                Debug.LogWarning("Target Object가 비어 있습니다.");
             }
         }
 
         if (targetPlacement == null)
         {
             GameObject foundPlacement = GameObject.Find("TargetPlacement");
-
             if (foundPlacement != null)
             {
                 targetPlacement = foundPlacement;
@@ -149,18 +154,8 @@ public class RobotArmController : MonoBehaviour
             }
             else
             {
-                Debug.LogWarning("TargetPlacement가 연결되지 않았습니다. 놓을 때 위치 보정이 제한됩니다.");
+                Debug.LogWarning("TargetPlacement가 연결되지 않았습니다.");
             }
-        }
-
-        if (gripperLeft == null)
-        {
-            Debug.LogWarning("Gripper Left가 비어 있습니다. 그리퍼 애니메이션은 생략될 수 있습니다.");
-        }
-
-        if (gripperRight == null)
-        {
-            Debug.LogWarning("Gripper Right가 비어 있습니다. 그리퍼 애니메이션은 생략될 수 있습니다.");
         }
 
         return true;
@@ -171,9 +166,7 @@ public class RobotArmController : MonoBehaviour
         GameObject target = targetObject;
 
         if (target == null)
-        {
             target = GameObject.Find("Target");
-        }
 
         if (target == null)
         {
@@ -239,13 +232,6 @@ public class RobotArmController : MonoBehaviour
 
         ApplyMotionCommand(msg);
 
-        Debug.Log(
-            $"✅ 명령 수신: object_type={msg.object_type}, " +
-            $"force={msg.force}, is_fragile={msg.is_fragile}, " +
-            $"move_speed={msg.move_speed}, motion_style={msg.motion_style}, " +
-            $"applied_speed={currentMoveSpeed}"
-        );
-
         GameObject target = ResolveTargetObject(msg.object_type);
 
         if (target == null)
@@ -256,22 +242,16 @@ public class RobotArmController : MonoBehaviour
         }
 
         if (targetPlacement == null)
-        {
             targetPlacement = GameObject.Find("TargetPlacement");
-        }
 
-        Debug.Log($"Target 위치: {target.transform.position}");
+        Debug.Log(
+            $"✅ 명령 수신: object_type={msg.object_type}, " +
+            $"force={msg.force}, is_fragile={msg.is_fragile}, " +
+            $"move_speed={msg.move_speed}, motion_style={msg.motion_style}, " +
+            $"applied_speed={currentMoveSpeed}, taskMode={taskMode}"
+        );
 
-        if (targetPlacement != null)
-        {
-            Debug.Log($"TargetPlacement 위치: {targetPlacement.transform.position}");
-        }
-        else
-        {
-            Debug.LogWarning("TargetPlacement를 찾을 수 없습니다. place 위치 보정 없이 진행합니다.");
-        }
-
-        StartCoroutine(PickAndPlace(target, msg));
+        StartCoroutine(ExecuteTaskMode(target, msg));
     }
 
     private void ApplyMotionCommand(GraspCommandMsg msg)
@@ -283,14 +263,10 @@ public class RobotArmController : MonoBehaviour
         float speed = msg.move_speed;
 
         if (speed <= 0f)
-        {
-            speed = 1.0f;
-        }
+            speed = 0.9f;
 
         if (style != "gentle" && style != "normal" && style != "fast")
-        {
             style = "normal";
-        }
 
         if (msg.is_fragile || style == "gentle")
         {
@@ -316,14 +292,11 @@ public class RobotArmController : MonoBehaviour
     private GameObject ResolveTargetObject(string objectName)
     {
         if (targetObject != null)
-        {
             return targetObject;
-        }
 
         if (!string.IsNullOrEmpty(objectName))
         {
             GameObject foundByMsg = GameObject.Find(objectName);
-
             if (foundByMsg != null)
             {
                 targetObject = foundByMsg;
@@ -332,7 +305,6 @@ public class RobotArmController : MonoBehaviour
         }
 
         GameObject foundTarget = GameObject.Find("Target");
-
         if (foundTarget != null)
         {
             targetObject = foundTarget;
@@ -342,15 +314,37 @@ public class RobotArmController : MonoBehaviour
         return null;
     }
 
-    private IEnumerator PickAndPlace(GameObject target, GraspCommandMsg msg)
+    private IEnumerator ExecuteTaskMode(GameObject target, GraspCommandMsg msg)
     {
         isBusy = true;
+
+        if (cleanupPreviousAttachmentOnNewCommand)
+        {
+            CleanupPreviousAttachment();
+            yield return new WaitForSeconds(GetScaledWaitTime(0.15f));
+        }
+
+        Rigidbody rb = target.GetComponent<Rigidbody>();
+
+        Transform commandOriginalParent = target.transform.parent;
+        Vector3 commandOriginalPosition = target.transform.position;
+        Quaternion commandOriginalRotation = target.transform.rotation;
+
+        originalParent = commandOriginalParent;
+
+        Debug.Log($"🚀 작업 시작: taskMode={taskMode}, motion_style={currentMotionStyle}, move_speed={currentMoveSpeed}");
+        Debug.Log($"📌 명령 시작 시 Target 위치 저장: {commandOriginalPosition}");
 
         if (resetTargetBeforeCommand)
         {
             Debug.Log("명령 시작 전 Target Reset...");
             ResetTargetToInitialPose();
             yield return new WaitForSeconds(GetScaledWaitTime(0.2f));
+
+            commandOriginalParent = target.transform.parent;
+            commandOriginalPosition = target.transform.position;
+            commandOriginalRotation = target.transform.rotation;
+            originalParent = commandOriginalParent;
         }
 
         if (moveHomeBeforeCommand)
@@ -359,54 +353,188 @@ public class RobotArmController : MonoBehaviour
             yield return StartCoroutine(MoveToPose(homePose));
         }
 
-        Rigidbody rb = target.GetComponent<Rigidbody>();
-        originalParent = target.transform.parent;
-
-        Debug.Log($"🚀 Pick & Place 시작: motion_style={currentMotionStyle}, move_speed={currentMoveSpeed}");
-
-        // 1. Pick 방향으로 먼저 회전
         Debug.Log("Pick 방향으로 수평 이동...");
         float[] approachPose = ClonePose(homePose);
         approachPose[0] = pickPose[0];
         yield return StartCoroutine(MoveToPose(approachPose));
 
-        // 2. Pick 위치로 하강
         Debug.Log("Pick 위치로 하강...");
         yield return StartCoroutine(MoveToPose(pickPose));
 
-        // 3. 그리퍼 닫기
-        Debug.Log("집는 중...");
+        Debug.Log("그리퍼 닫는 중...");
         yield return StartCoroutine(AnimateGripper(gripOpenX, gripCloseX));
 
-        // 4. 물체 부착
-        Debug.Log("물체 부착 위치 보정...");
+        Debug.Log("잡기 판정 확인...");
+        bool attached = TryAttachObject(target, rb);
 
-        if (rb != null)
+        if (!attached)
         {
-            rb.useGravity = false;
-            rb.isKinematic = true;
+            Debug.LogWarning("❌ 잡기 실패: 그리퍼가 물체에 충분히 가까이 가지 못했습니다.");
+            yield return StartCoroutine(AnimateGripper(gripCloseX, gripOpenX));
+            yield return StartCoroutine(MoveToPose(homePose));
+            PublishFeedback(false, msg.force, "grasp_failed:not_close_enough");
+            isBusy = false;
+            yield break;
         }
 
-        target.transform.SetParent(endEffector, false);
-        target.transform.localPosition = attachLocalPosition;
-        target.transform.localRotation = Quaternion.identity;
-
-        // 5. 들어올리기
         Debug.Log("들어올리는 중...");
         yield return StartCoroutine(MoveToPose(liftPose));
 
-        // 6. Place 방향으로 수평 이동
         Debug.Log("Place 방향으로 수평 이동...");
         float[] horizontalPose = ClonePose(liftPose);
         horizontalPose[0] = placePose[0];
         yield return StartCoroutine(MoveToPose(horizontalPose));
 
-        // 7. Place 위치로 하강
         Debug.Log("Place 위치로 하강...");
         yield return StartCoroutine(MoveToPose(placePose));
 
-        // 8. 놓기
-        Debug.Log("놓는 중...");
+        switch (taskMode)
+        {
+            case UnityTaskMode.PickAndPlace:
+                yield return StartCoroutine(CompletePickAndPlace(target, rb, msg.force));
+                break;
+
+            case UnityTaskMode.PickAndCarryOnly:
+                yield return StartCoroutine(CompletePickAndCarryOnly(msg.force));
+                break;
+
+            case UnityTaskMode.PickMoveAndReturnObject:
+                yield return StartCoroutine(CompletePickMoveAndReturnObject(
+                    target,
+                    rb,
+                    commandOriginalParent,
+                    commandOriginalPosition,
+                    commandOriginalRotation,
+                    msg.force
+                ));
+                break;
+        }
+
+        isBusy = false;
+    }
+
+    private IEnumerator CompletePickAndPlace(GameObject target, Rigidbody rb, float force)
+    {
+        Debug.Log("📦 모드: PickAndPlace - 목적지에 내려놓기");
+
+        ReleaseObjectAtDestination(target, rb);
+
+        yield return StartCoroutine(AnimateGripper(gripCloseX, gripOpenX));
+
+        yield return StartCoroutine(ReturnHomeAfterPlace());
+
+        EnableReleasedObjectPhysics(target, rb);
+
+        PublishFeedback(true, force, $"success:pick_place:{currentMotionStyle}:{currentMoveSpeed}");
+
+        Debug.Log("✅ PickAndPlace 완료");
+    }
+
+    private IEnumerator CompletePickAndCarryOnly(float force)
+    {
+        Debug.Log("📦 모드: PickAndCarryOnly - 물체를 내려놓지 않고 들고 있는 상태 유지");
+
+        yield return new WaitForSeconds(GetScaledWaitTime(carryOnlyHoldSeconds));
+
+        PublishFeedback(true, force, $"success:carry_only:{currentMotionStyle}:{currentMoveSpeed}");
+
+        Debug.Log("✅ PickAndCarryOnly 완료");
+        Debug.Log("ℹ️ 다음 명령이 들어오면 이전 부착 상태를 먼저 정리합니다.");
+    }
+
+    private IEnumerator CompletePickMoveAndReturnObject(
+        GameObject target,
+        Rigidbody rb,
+        Transform commandOriginalParent,
+        Vector3 commandOriginalPosition,
+        Quaternion commandOriginalRotation,
+        float force
+    )
+    {
+        Debug.Log("📦 모드: PickMoveAndReturnObject - 목적지 이동 후 원래 위치로 복귀");
+
+        yield return new WaitForSeconds(GetScaledWaitTime(returnModeWaitSeconds));
+
+        Debug.Log("목적지에서 다시 들어올리기...");
+        float[] liftAfterDestination = ClonePose(placePose);
+        liftAfterDestination[1] = liftPose[1];
+        yield return StartCoroutine(MoveToPose(liftAfterDestination));
+
+        Debug.Log("원래 위치 방향으로 수평 이동...");
+        float[] returnHorizontalPose = ClonePose(liftAfterDestination);
+        returnHorizontalPose[0] = pickPose[0];
+        yield return StartCoroutine(MoveToPose(returnHorizontalPose));
+
+        Debug.Log("원래 위치로 하강...");
+        yield return StartCoroutine(MoveToPose(pickPose));
+
+        ReleaseObjectAtOriginalPose(
+            target,
+            rb,
+            commandOriginalParent,
+            commandOriginalPosition,
+            commandOriginalRotation
+        );
+
+        yield return StartCoroutine(AnimateGripper(gripCloseX, gripOpenX));
+
+        Debug.Log("원위치 배치 후 들어올리기...");
+        yield return StartCoroutine(MoveToPose(liftPose));
+
+        Debug.Log("Home 방향으로 수평 이동...");
+        float[] returnPose = ClonePose(liftPose);
+        returnPose[0] = homePose[0];
+        yield return StartCoroutine(MoveToPose(returnPose));
+
+        Debug.Log("Home으로 복귀...");
+        yield return StartCoroutine(MoveToPose(homePose));
+
+        EnableReleasedObjectPhysics(target, rb);
+
+        PublishFeedback(true, force, $"success:return_original:{currentMotionStyle}:{currentMoveSpeed}");
+
+        Debug.Log("✅ PickMoveAndReturnObject 완료");
+    }
+
+    private bool TryAttachObject(GameObject target, Rigidbody rb)
+    {
+        if (target == null || endEffector == null)
+        {
+            Debug.LogWarning("TryAttachObject 실패: target 또는 endEffector가 없습니다.");
+            return false;
+        }
+
+        float distance = Vector3.Distance(endEffector.position, target.transform.position);
+
+        Debug.Log($"📏 그리퍼-물체 거리: {distance:F3}, 허용 거리: {graspAttachDistance:F3}");
+
+        if (requireGraspDistanceCheck && distance > graspAttachDistance)
+        {
+            Debug.LogWarning("❌ 물체가 그리퍼에서 너무 멀어서 잡지 않습니다.");
+            return false;
+        }
+
+        currentAttachedObject = target;
+        currentAttachedOriginalParent = target.transform.parent;
+
+        FreezeRigidbody(rb);
+
+        target.transform.SetParent(endEffector, true);
+        target.transform.localPosition = attachLocalPosition;
+        target.transform.localRotation = Quaternion.identity;
+
+        Debug.Log($"🔗 물체 잡기 성공: localPosition={attachLocalPosition}");
+
+        return true;
+    }
+
+    private void ReleaseObjectAtDestination(GameObject target, Rigidbody rb)
+    {
+        if (target == null)
+        {
+            Debug.LogWarning("ReleaseObjectAtDestination 실패: target이 없습니다.");
+            return;
+        }
 
         target.transform.SetParent(originalParent, true);
 
@@ -421,36 +549,136 @@ public class RobotArmController : MonoBehaviour
             );
 
             target.transform.rotation = Quaternion.identity;
+
+            Debug.Log("📍 TargetPlacement 위치로 물체를 내려놓았습니다.");
         }
+        else
+        {
+            Debug.LogWarning("TargetPlacement가 없어서 현재 위치에 내려놓습니다.");
+        }
+
+        FreezeRigidbody(rb);
+        ClearCurrentAttachmentIfTarget(target);
+
+        Debug.Log("🧊 물체를 잠깐 고정했습니다. 팔이 빠져나간 뒤 물리를 다시 켭니다.");
+    }
+
+    private void ReleaseObjectAtOriginalPose(
+        GameObject target,
+        Rigidbody rb,
+        Transform commandOriginalParent,
+        Vector3 commandOriginalPosition,
+        Quaternion commandOriginalRotation
+    )
+    {
+        if (target == null)
+        {
+            Debug.LogWarning("ReleaseObjectAtOriginalPose 실패: target이 없습니다.");
+            return;
+        }
+
+        target.transform.SetParent(commandOriginalParent, true);
+
+        target.transform.position = commandOriginalPosition;
+        target.transform.rotation = commandOriginalRotation;
+
+        Debug.Log($"📍 원래 위치로 물체를 돌려놓았습니다: {commandOriginalPosition}");
+
+        FreezeRigidbody(rb);
+        ClearCurrentAttachmentIfTarget(target);
+
+        Debug.Log("🧊 원위치 물체를 잠깐 고정했습니다. 팔이 빠져나간 뒤 물리를 다시 켭니다.");
+    }
+
+    private void FreezeRigidbody(Rigidbody rb)
+    {
+        if (rb == null)
+            return;
+
+        rb.isKinematic = true;
+        rb.useGravity = false;
+    }
+
+    private void EnableReleasedObjectPhysics(GameObject target, Rigidbody rb)
+    {
+        if (target == null)
+            return;
+
+        if (rb == null)
+            rb = target.GetComponent<Rigidbody>();
 
         if (rb != null)
         {
             rb.isKinematic = false;
             rb.useGravity = true;
+
+            rb.velocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
         }
 
-        yield return StartCoroutine(AnimateGripper(gripCloseX, gripOpenX));
+        Debug.Log("✅ 팔이 빠져나간 뒤 물체 물리를 다시 켰습니다.");
+    }
 
-        // 9. 다시 들어올리기
+    private void CleanupPreviousAttachment()
+    {
+        GameObject attached = currentAttachedObject;
+
+        if (attached == null && targetObject != null && endEffector != null)
+        {
+            if (targetObject.transform.IsChildOf(endEffector))
+            {
+                attached = targetObject;
+            }
+        }
+
+        if (attached == null)
+            return;
+
+        Debug.LogWarning("🧹 이전 명령에서 팔에 붙어 있던 물체를 먼저 해제합니다.");
+
+        Rigidbody rb = attached.GetComponent<Rigidbody>();
+
+        Transform parentToRestore = currentAttachedOriginalParent;
+        if (parentToRestore == null)
+            parentToRestore = originalParent;
+
+        attached.transform.SetParent(parentToRestore, true);
+
+        if (rb != null)
+        {
+            rb.isKinematic = false;
+            rb.useGravity = true;
+            rb.velocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
+
+        currentAttachedObject = null;
+        currentAttachedOriginalParent = null;
+    }
+
+    private void ClearCurrentAttachmentIfTarget(GameObject target)
+    {
+        if (currentAttachedObject == target)
+        {
+            currentAttachedObject = null;
+            currentAttachedOriginalParent = null;
+        }
+    }
+
+    private IEnumerator ReturnHomeAfterPlace()
+    {
         Debug.Log("올라오는 중...");
         float[] liftAfterPlace = ClonePose(placePose);
         liftAfterPlace[1] = liftPose[1];
         yield return StartCoroutine(MoveToPose(liftAfterPlace));
 
-        // 10. Home 방향으로 수평 이동
         Debug.Log("Home 방향으로 수평 이동...");
         float[] returnPose = ClonePose(liftAfterPlace);
         returnPose[0] = homePose[0];
         yield return StartCoroutine(MoveToPose(returnPose));
 
-        // 11. Home 복귀
         Debug.Log("Home으로 복귀...");
         yield return StartCoroutine(MoveToPose(homePose));
-
-        PublishFeedback(true, msg.force, $"success:{currentMotionStyle}:{currentMoveSpeed}");
-
-        Debug.Log("✅ Pick & Place 완료");
-        isBusy = false;
     }
 
     private float[] ClonePose(float[] source)
@@ -460,13 +688,9 @@ public class RobotArmController : MonoBehaviour
         for (int i = 0; i < result.Length; i++)
         {
             if (source != null && i < source.Length)
-            {
                 result[i] = source[i];
-            }
             else
-            {
                 result[i] = 0f;
-            }
         }
 
         return result;
@@ -559,13 +783,9 @@ public class RobotArmController : MonoBehaviour
         float duration = 0.5f;
 
         if (currentMotionStyle == "gentle")
-        {
             duration *= gentleGripperMultiplier;
-        }
         else if (currentMotionStyle == "fast")
-        {
             duration *= fastGripperMultiplier;
-        }
 
         duration = Mathf.Max(0.1f, duration);
 
@@ -595,6 +815,18 @@ public class RobotArmController : MonoBehaviour
 
             yield return null;
         }
+
+        gripperLeft.localPosition = new Vector3(
+            -toX,
+            leftStart.y,
+            leftStart.z
+        );
+
+        gripperRight.localPosition = new Vector3(
+            toX,
+            rightStart.y,
+            rightStart.z
+        );
     }
 
     private void PublishFeedback(bool success, float force, string status)
@@ -615,9 +847,7 @@ public class RobotArmController : MonoBehaviour
         GameObject target = targetObject;
 
         if (target == null)
-        {
             target = GameObject.Find("Target");
-        }
 
         if (target == null)
         {
@@ -631,23 +861,17 @@ public class RobotArmController : MonoBehaviour
             return;
         }
 
+        CleanupPreviousAttachment();
+
         Rigidbody rb = target.GetComponent<Rigidbody>();
 
-        if (rb != null)
-        {
-            rb.isKinematic = true;
-            rb.useGravity = false;
-        }
+        FreezeRigidbody(rb);
 
         target.transform.SetParent(originalParent, true);
         target.transform.position = initialTargetPosition;
         target.transform.rotation = initialTargetRotation;
 
-        if (rb != null)
-        {
-            rb.isKinematic = false;
-            rb.useGravity = true;
-        }
+        EnableReleasedObjectPhysics(target, rb);
 
         Debug.Log($"✅ Target Reset 완료: {initialTargetPosition}");
     }
@@ -658,9 +882,7 @@ public class RobotArmController : MonoBehaviour
         GameObject target = targetObject;
 
         if (target == null)
-        {
             target = GameObject.Find("Target");
-        }
 
         if (target == null)
         {

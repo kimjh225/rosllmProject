@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# flake8: noqa
+
+import json
+
+import rclpy
+from rclpy.node import Node
+from llm_interfaces.srv import ChatGPT
+from std_msgs.msg import Float64MultiArray
+from basic_capstone.msg import GraspCommand
+
+from llm_config.user_config import UserConfig
+
+
+config = UserConfig()
+
+
+class ArmRobot(Node):
+    def __init__(self):
+        super().__init__("arm_robot")
+
+        self.target_pose_publisher = self.create_publisher(
+            Float64MultiArray, "/target_pose", 10
+        )
+
+        self.function_call_server = self.create_service(
+            ChatGPT, "/ChatGPT_function_call_service", self.function_call_callback
+        )
+
+        self.grasp_publisher = self.create_publisher(
+            GraspCommand, "/grasp_command", 10
+        )
+
+        self.get_logger().info("ArmRobot node has been initialized")
+
+    def function_call_callback(self, request, response):
+        try:
+            req = json.loads(request.request_text)
+            function_name = req["name"]
+            function_args = json.loads(req["arguments"])
+
+            if not hasattr(self, function_name):
+                raise ValueError(f"Unknown function: {function_name}")
+
+            func_obj = getattr(self, function_name)
+            function_execution_result = func_obj(**function_args)
+
+        except Exception as error:
+            self.get_logger().error(f"Failed to call function: {error}")
+            response.response_text = str(error)
+        else:
+            response.response_text = str(function_execution_result)
+
+        return response
+
+    def _normalize_motion(self, kwargs):
+        motion_style = str(kwargs.get("motion_style", "normal")).lower().strip()
+
+        if motion_style not in ["gentle", "normal", "fast"]:
+            motion_style = "normal"
+
+        try:
+            move_speed = float(kwargs.get("move_speed", 1.0))
+        except (TypeError, ValueError):
+            move_speed = 1.0
+
+        try:
+            force = float(kwargs.get("force", 3.0))
+        except (TypeError, ValueError):
+            force = 3.0
+
+        object_type = str(kwargs.get("object_type", "Target"))
+        if object_type.strip() == "":
+            object_type = "Target"
+
+        is_fragile = kwargs.get("is_fragile", False)
+        if isinstance(is_fragile, str):
+            is_fragile = is_fragile.lower() in [
+                "true",
+                "yes",
+                "1",
+                "fragile",
+                "careful",
+                "gentle",
+            ]
+        else:
+            is_fragile = bool(is_fragile)
+
+        if is_fragile or motion_style == "gentle":
+            motion_style = "gentle"
+            is_fragile = True
+            move_speed = min(move_speed, 0.7)
+            move_speed = max(move_speed, 0.3)
+            force = min(force, 3.0)
+            force = max(force, 1.0)
+
+        elif motion_style == "fast":
+            move_speed = max(move_speed, 1.5)
+            move_speed = min(move_speed, 3.0)
+            force = max(force, 2.5)
+            force = min(force, 6.0)
+
+        else:
+            motion_style = "normal"
+            move_speed = max(0.8, min(move_speed, 1.2))
+            force = max(1.0, min(force, 5.0))
+
+        return {
+            "force": force,
+            "object_type": object_type,
+            "is_fragile": is_fragile,
+            "move_speed": move_speed,
+            "motion_style": motion_style,
+        }
+
+    def grasp(self, **kwargs):
+        """
+        Publish GraspCommand to /grasp_command.
+        Unity receives this command and adjusts pick-and-place speed.
+        """
+        normalized = self._normalize_motion(kwargs)
+
+        grasp_command = GraspCommand()
+        grasp_command.force = normalized["force"]
+        grasp_command.object_type = normalized["object_type"]
+        grasp_command.is_fragile = normalized["is_fragile"]
+        grasp_command.move_speed = normalized["move_speed"]
+        grasp_command.motion_style = normalized["motion_style"]
+
+        self.grasp_publisher.publish(grasp_command)
+
+        self.get_logger().info(
+            "GraspCommand published: "
+            f"object={grasp_command.object_type}, "
+            f"force={grasp_command.force}, "
+            f"is_fragile={grasp_command.is_fragile}, "
+            f"move_speed={grasp_command.move_speed}, "
+            f"motion_style={grasp_command.motion_style}"
+        )
+
+        return (
+            "grasp command sent: "
+            f"object={grasp_command.object_type}, "
+            f"force={grasp_command.force}, "
+            f"is_fragile={grasp_command.is_fragile}, "
+            f"move_speed={grasp_command.move_speed}, "
+            f"motion_style={grasp_command.motion_style}"
+        )
+
+    def publish_target_pose(self, **kwargs):
+        pose = [
+            kwargs.get("x", 0.2),
+            kwargs.get("y", 0.2),
+            kwargs.get("z", 0.2),
+            kwargs.get("roll", 0.2),
+            kwargs.get("pitch", 0.2),
+            kwargs.get("yaw", 0.2),
+        ]
+
+        msg = Float64MultiArray()
+        msg.data = [float(v) for v in pose]
+
+        self.target_pose_publisher.publish(msg)
+        self.get_logger().info(f"Published target message successfully: {pose}")
+
+        return ", ".join(map(str, pose))
+
+
+def main():
+    rclpy.init()
+    arm_robot = ArmRobot()
+    rclpy.spin(arm_robot)
+    rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

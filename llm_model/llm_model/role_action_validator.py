@@ -12,7 +12,6 @@ class RoleActionValidator:
         self.max_retries = max_retries
         self.allowed_roles = ["MANIPULATION"]
         self.allowed_actions = {"MANIPULATION": ["grasp"]}
-<<<<<<< HEAD
         self.required_parameters = [
             "force",
             "object_type",
@@ -21,20 +20,14 @@ class RoleActionValidator:
             "motion_style",
         ]
         self.allowed_motion_styles = ["gentle", "normal", "fast"]
-=======
-        self.required_parameters = ["force", "object_type", "is_fragile"]
->>>>>>> origin/ros2-humble
 
     def _extract_json_text(self, content):
         if not isinstance(content, str):
             return None
 
         cleaned = re.sub(r"```(?:json)?", "", content, flags=re.IGNORECASE).strip()
-<<<<<<< HEAD
         cleaned = cleaned.strip("`").strip()
 
-=======
->>>>>>> origin/ros2-humble
         if cleaned.startswith("{") and cleaned.endswith("}"):
             return cleaned
 
@@ -45,7 +38,6 @@ class RoleActionValidator:
 
         return cleaned[start : end + 1]
 
-<<<<<<< HEAD
     def _normalize_parameters(self, parameters):
         """
         Normalize and clamp parameters before execution.
@@ -82,8 +74,6 @@ class RoleActionValidator:
 
         return normalized
 
-=======
->>>>>>> origin/ros2-humble
     def validate_once(self, content):
         json_text = self._extract_json_text(content)
         if json_text is None:
@@ -112,12 +102,8 @@ class RoleActionValidator:
             return (
                 False,
                 None,
-<<<<<<< HEAD
                 f"Invalid action '{action}' for role '{role}'. "
                 f"Allowed actions: {self.allowed_actions.get(role, [])}",
-=======
-                f"Invalid action '{action}' for role '{role}'. Allowed actions: {self.allowed_actions.get(role, [])}",
->>>>>>> origin/ros2-humble
             )
 
         if not isinstance(parameters, dict):
@@ -133,12 +119,9 @@ class RoleActionValidator:
                 f"Missing required parameters: {', '.join(missing_parameters)}",
             )
 
-<<<<<<< HEAD
         parameters = self._normalize_parameters(parameters)
         command["parameters"] = parameters
 
-=======
->>>>>>> origin/ros2-humble
         return True, command, ""
 
     def build_retry_messages(self, user_prompt, last_response, validation_error):
@@ -146,16 +129,12 @@ class RoleActionValidator:
             "Your previous response failed schema validation. "
             f"Validation error: {validation_error} "
             "Return ONLY one JSON object with this exact schema: "
-<<<<<<< HEAD
             '{"role":"MANIPULATION","action":"grasp","parameters":'
             '{"force":float,"object_type":"Target","is_fragile":bool,'
             '"move_speed":float,"motion_style":"gentle|normal|fast"}}. '
             "Rules: "
             "Korean words 조심스럽게/천천히 mean motion_style gentle, move_speed 0.5, lower force. "
             "Korean words 빠르게/빨리 mean motion_style fast, move_speed 2.0. "
-=======
-            '{"role":"MANIPULATION","action":"grasp","parameters":{"force":float,"object_type":string,"is_fragile":bool}}. '
->>>>>>> origin/ros2-humble
             "No extra text."
         )
 

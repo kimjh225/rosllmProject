@@ -75,6 +75,7 @@ class UserConfig:
         # [optional]: The prompt given to the AI, provided by the user
         self.user_prompt = ""
         # [optional]: The generated prompt by the administrator, used as a prefix for the AI's response
+<<<<<<< HEAD
         self.system_prompt = (
             "You are a robot-arm controller AI. "
             "Always return exactly one JSON object and no extra text. "
@@ -91,6 +92,14 @@ class UserConfig:
             "If no speed is mentioned, set motion_style='normal', move_speed=1.0, force=3.0. "
             "For object_type: use the exact object name mentioned. In the Unity demo, use 'Target'. "
             "Do not use any other values outside the above rules."
+=======
+        self.system_prompt =(
+            "You are a robot-arm controller AI. "
+            "Always return exactly one JSON object and no extra text. "
+            'Schema: {"role":"MANIPULATION","action":"grasp","parameters":{"force":float,"object_type":string,"is_fragile":bool}}. '
+            "Use role=MANIPULATION and action=grasp only. "
+            "All three parameters are mandatory."
+>>>>>>> origin/ros2-humble
         )
         # TODO: System prompt only works for the first message,so it will be forgotten soon after the first message
         # modify the llm_model/chatgpt.py, add system_prompt to every prompt to solve this problem @Herman Ye
@@ -116,17 +125,28 @@ class UserConfig:
         self.robot_functions_list = self.robot_behavior.robot_functions_list
         # [optional]: Multi-robot list
         # "" is for robot without name
+<<<<<<< HEAD
         self.multi_robots_name = ["turtle1", "turtle2", "minipupper", ""]
 
+=======
+        self.multi_robots_name=["turtle1","turtle2","minipupper",""]
+        
+>>>>>>> origin/ros2-humble
         # AWS related
         # [required]: AWS IAM access key id
         self.aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
         # [required]: AWS IAM secret access key
         self.aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
         # [required]: AWS IAM region name
+<<<<<<< HEAD
         self.aws_region_name = "ap-southeast-1"
         # [required]: AWS S3 bucket name
         self.bucket_name = "auromixbucket"
+=======
+        self.aws_region_name = 'ap-southeast-1'
+        # [required]: AWS S3 bucket name
+        self.bucket_name = 'auromixbucket'
+>>>>>>> origin/ros2-humble
         # [optional]: AWS transcription language, change this to 'zh-CN' for Chinese
         self.aws_transcription_language = "en-US"
         # [optional]: AWS polly voice id, change this to 'Zhiyu' for Chinese
@@ -136,7 +156,11 @@ class UserConfig:
         # [optional]: OpenAI Whisper Model size: tiny base small medium large
         self.whisper_model_size = "medium"
         # [optional]: OpenAI Whisper Model language: en
+<<<<<<< HEAD
         self.whisper_language = "en"
+=======
+        self.whisper_language="en"
+>>>>>>> origin/ros2-humble
         # Audio recording related
         # [optional]: Audio recording duration, in seconds
         self.duration = 5
